@@ -4,9 +4,13 @@ import requests
 import json
 import os
 from datetime import datetime
+import time
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=["*"], methods=["GET", "POST", "OPTIONS"])
+
+# SecondLife特有の設定
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
 # Hugging Face無料APIの設定
 HF_API_URL = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium"
@@ -22,17 +26,41 @@ conversation_history = {}
 def home():
     return "SecondLife AI Chatbot Server is running!"
 
-@app.route('/chat', methods=['POST'])
+@app.route('/chat', methods=['POST', 'OPTIONS'])
 def chat():
+    # OPTIONSリクエストへの対応
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'POST,OPTIONS')
+        return response
+    
     try:
+        # リクエストデータの検証
+        if not request.is_json:
+            return jsonify({"response": "JSONフォーマットが必要です"}), 400
+        
         data = request.get_json()
-        message = data.get('message', '')
+        if not data:
+            return jsonify({"response": "データが空です"}), 400
+            
+        message = data.get('message', '').strip()
         user = data.get('user', 'anonymous')
+        
+        if not message:
+            return jsonify({"response": "メッセージが空です"}), 400
         
         print(f"[{datetime.now()}] User {user}: {message}")
         
+        # 処理時間を記録
+        start_time = time.time()
+        
         # 日本語でのAI応答生成
         response = generate_japanese_response(message, user)
+        
+        processing_time = time.time() - start_time
+        print(f"[{datetime.now()}] Processing time: {processing_time:.2f}s")
         
         # 会話履歴に追加
         if user not in conversation_history:
@@ -45,18 +73,29 @@ def chat():
         
         print(f"[{datetime.now()}] Bot response: {response}")
         
-        return jsonify({
+        # レスポンスヘッダーを設定
+        response_obj = jsonify({
             "response": response,
             "timestamp": datetime.now().isoformat(),
-            "user": user
+            "user": user,
+            "processing_time": processing_time
         })
+        
+        response_obj.headers.add('Access-Control-Allow-Origin', '*')
+        response_obj.headers.add('Cache-Control', 'no-cache, no-store, must-revalidate')
+        response_obj.headers.add('Pragma', 'no-cache')
+        response_obj.headers.add('Expires', '0')
+        
+        return response_obj
     
     except Exception as e:
         print(f"Error: {str(e)}")
-        return jsonify({
+        error_response = jsonify({
             "response": "申し訳ございません。エラーが発生しました。",
             "error": str(e)
-        }), 500
+        })
+        error_response.headers.add('Access-Control-Allow-Origin', '*')
+        return error_response, 500
 
 def generate_japanese_response(message, user):
     """日本語でのAI応答生成"""
